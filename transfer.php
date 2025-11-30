@@ -581,8 +581,8 @@ function formatBytes($bytes, $precision = 2) {
             updateStatus('Memulai download...', 'bg-primary');
             startTime = Date.now();
             
-            // Start progress monitoring (setiap 500ms)
-            downloadInterval = setInterval(checkProgress, 500);
+            // Start progress monitoring (setiap 300ms untuk lebih responsif)
+            downloadInterval = setInterval(checkProgress, 300);
             
             // Send download request
             fetch('', {
@@ -621,29 +621,44 @@ function formatBytes($bytes, $precision = 2) {
         }
 
         function updateProgress(data) {
-            const percent = data.percent || 0;
+            const percent = Math.min(data.percent || 0, 100);
             const downloaded = data.downloaded || 0;
             const total = data.total || 0;
             const speed = data.speed || 0;
             
-            document.getElementById('progressBar').style.width = percent + '%';
+            // Update progress bar
+            document.getElementById('progressBar').style.width = percent.toFixed(1) + '%';
             document.getElementById('progressText').textContent = percent.toFixed(1) + '%';
+            
+            // Update downloaded size
             document.getElementById('downloadedSize').textContent = formatBytes(downloaded);
             
+            // Update total size
             if (total > 0) {
                 document.getElementById('totalSize').textContent = formatBytes(total);
             }
             
-            document.getElementById('downloadSpeed').textContent = formatBytes(speed) + '/s';
+            // Update speed dengan format yang lebih baik
+            if (speed > 0) {
+                document.getElementById('downloadSpeed').textContent = formatBytes(speed) + '/s';
+            } else {
+                document.getElementById('downloadSpeed').textContent = 'Calculating...';
+            }
             
+            // Calculate time remaining
             if (speed > 0 && total > downloaded) {
                 const remaining = (total - downloaded) / speed;
                 document.getElementById('timeRemaining').textContent = formatTime(remaining);
+            } else if (percent >= 99) {
+                document.getElementById('timeRemaining').textContent = 'Almost done...';
             } else {
-                document.getElementById('timeRemaining').textContent = '-';
+                document.getElementById('timeRemaining').textContent = 'Calculating...';
             }
             
-            updateStatus('Downloading... ' + formatBytes(downloaded) + ' / ' + formatBytes(total), 'bg-info');
+            // Update status badge dengan info progress
+            const downloadedMB = (downloaded / (1024 * 1024)).toFixed(1);
+            const totalMB = (total / (1024 * 1024)).toFixed(1);
+            updateStatus(`Downloading... ${downloadedMB} MB / ${totalMB} MB`, 'bg-info');
         }
 
         function handleDownloadComplete(data) {
@@ -652,11 +667,22 @@ function formatBytes($bytes, $precision = 2) {
             downloadBtn.innerHTML = '<i class="fas fa-cloud-download-alt me-2"></i>Download File';
             
             if (data.success) {
+                // Update progress bar ke 100%
                 document.getElementById('progressBar').style.width = '100%';
                 document.getElementById('progressText').textContent = '100%';
-                updateStatus('Selesai!', 'bg-success');
                 
+                // Update semua info dengan data final
+                const fileSize = data.size || 0;
+                document.getElementById('downloadedSize').textContent = formatBytes(fileSize);
+                document.getElementById('totalSize').textContent = formatBytes(fileSize);
+                document.getElementById('timeRemaining').textContent = 'Completed!';
+                
+                // Hitung kecepatan rata-rata
                 const elapsed = (Date.now() - startTime) / 1000;
+                const avgSpeed = elapsed > 0 ? fileSize / elapsed : 0;
+                document.getElementById('downloadSpeed').textContent = formatBytes(avgSpeed) + '/s (avg)';
+                
+                updateStatus('Download Selesai!', 'bg-success');
                 
                 document.getElementById('resultSection').innerHTML = `
                     <div class="alert alert-success">
@@ -664,7 +690,8 @@ function formatBytes($bytes, $precision = 2) {
                         <hr>
                         <p class="mb-1"><strong>File:</strong> ${data.filename}</p>
                         <p class="mb-1"><strong>Ukuran:</strong> ${data.formatted_size}</p>
-                        <p class="mb-0"><strong>Waktu:</strong> ${formatTime(elapsed)}</p>
+                        <p class="mb-1"><strong>Waktu:</strong> ${formatTime(elapsed)}</p>
+                        <p class="mb-0"><strong>Kecepatan Rata-rata:</strong> ${formatBytes(avgSpeed)}/s</p>
                     </div>
                 `;
             } else {
