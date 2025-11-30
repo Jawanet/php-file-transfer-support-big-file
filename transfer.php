@@ -1,3 +1,4 @@
+
 <?php
 session_start();
 
@@ -287,7 +288,7 @@ function formatBytes($bytes, $precision = 2) {
         }
         .progress-bar {
             border-radius: 10px;
-            transition: width 0.3s ease;
+            transition: width 0.3s ease, background-color 0.3s ease; /* Transisi untuk warna juga */
             font-size: 0.9rem;
             font-weight: 600;
         }
@@ -465,11 +466,18 @@ function formatBytes($bytes, $precision = 2) {
 
         function startDownload() {
             const fileUrl = document.getElementById('fileUrl').value;
+            const progressBar = document.getElementById('progressBar');
             
             // Reset UI
             document.getElementById('progressSection').style.display = 'block';
             document.getElementById('resultSection').style.display = 'none';
-            document.getElementById('progressBar').style.width = '0%';
+            
+            // --- MODIFIKASI: RESET WARNA PROGRESS BAR ---
+            progressBar.style.width = '0%';
+            progressBar.classList.remove('bg-success'); // Hapus warna hijau jika ada
+            progressBar.classList.add('progress-bar-animated'); // Nyalakan animasi lagi
+            // --------------------------------------------
+
             document.getElementById('progressText').textContent = '0%';
             
             const downloadBtn = document.getElementById('downloadBtn');
@@ -568,12 +576,20 @@ function formatBytes($bytes, $precision = 2) {
 
         function handleDownloadComplete(data) {
             const downloadBtn = document.getElementById('downloadBtn');
+            const progressBar = document.getElementById('progressBar');
+
             downloadBtn.disabled = false;
             downloadBtn.innerHTML = '<i class="fas fa-cloud-download-alt me-2"></i>Download File';
             
             if (data.success) {
                 // Update progress bar ke 100%
-                document.getElementById('progressBar').style.width = '100%';
+                progressBar.style.width = '100%';
+                
+                // --- MODIFIKASI: UBAH WARNA JADI HIJAU ---
+                progressBar.classList.add('bg-success'); // Tambah class hijau Bootstrap
+                progressBar.classList.remove('progress-bar-animated'); // Matikan animasi
+                // -----------------------------------------
+
                 document.getElementById('progressText').textContent = '100%';
                 
                 // Update semua info dengan data final
