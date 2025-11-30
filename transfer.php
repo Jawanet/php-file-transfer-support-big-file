@@ -2,7 +2,7 @@
 <?php
 session_start();
 
-// Definisi path file progress berdasarkan Session ID agar unik per user
+// Define progress file path based on Session ID for uniqueness per user
 $progressFile = sys_get_temp_dir() . '/download_progress_' . session_id() . '.json';
 
 // Handle AJAX requests
@@ -13,11 +13,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     // ACTION: CHECK PROGRESS
     // -----------------------------------------------------------
     if ($_POST['action'] === 'check_progress') {
-        // Kita tidak butuh session lagi di sini, tutup biar performa lancar
+        // We don't need the session anymore here, close it for performance
         session_write_close();
 
         if (file_exists($progressFile)) {
-            // Bersihkan cache statfiles agar data selalu fresh
+            // Clear stat cache to ensure data is fresh
             clearstatcache(true, $progressFile);
             $data = file_get_contents($progressFile);
             echo $data;
@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'total' => 0,
                 'percent' => 0,
                 'speed' => 0,
-                'message' => 'Menunggu antrian...'
+                'message' => 'Idle...'
             ]);
         }
         exit;
@@ -40,22 +40,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
     if ($_POST['action'] === 'get_file_size') {
         if (!isset($_POST['url'])) {
-            echo json_encode(['success' => false, 'message' => 'URL harus diisi!']);
+            echo json_encode(['success' => false, 'message' => 'URL is required!']);
             exit;
         }
         
         $url = filter_var($_POST['url'], FILTER_SANITIZE_URL);
         
         if (!filter_var($url, FILTER_VALIDATE_URL)) {
-            echo json_encode(['success' => false, 'message' => 'URL tidak valid!']);
+            echo json_encode(['success' => false, 'message' => 'Invalid URL!']);
             exit;
         }
         
-        // Fungsi helper untuk mendapatkan ukuran file dengan metode bertingkat
+        // Helper function to get remote file size
         function getRemoteFileSize($url) {
-            // METHOD 1: Coba HEAD request standar
+            // METHOD 1: Try standard HEAD request
             $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_NOBODY, true); // Hanya minta header
+            curl_setopt($ch, CURLOPT_NOBODY, true); // Header only
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HEADER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
@@ -67,21 +67,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $data = curl_exec($ch);
             $size = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL); // URL asli setelah redirect
+            $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL); // Real URL after redirect
             curl_close($ch);
 
-            // Jika Method 1 berhasil dapat ukuran valid (> 0)
+            // If Method 1 succeeds
             if ($httpCode == 200 && $size > 0) {
                 return ['size' => $size, 'url' => $finalUrl];
             }
 
-            // METHOD 2: Range Request (Fallback jika Method 1 gagal)
-            // Kita minta 1 byte saja, server biasanya akan membalas dengan header Content-Range: bytes 0-0/TOTAL_SIZE
+            // METHOD 2: Range Request (Fallback)
             $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_NOBODY, false); // Harus GET, bukan HEAD
-            curl_setopt($ch, CURLOPT_RANGE, '0-0');  // Minta byte ke-0 saja
+            curl_setopt($ch, CURLOPT_NOBODY, false); // Must be GET
+            curl_setopt($ch, CURLOPT_RANGE, '0-0');  // Request 0th byte
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HEADER, true);  // Kita butuh header response
+            curl_setopt($ch, CURLOPT_HEADER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
@@ -90,12 +89,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
             curl_close($ch);
 
-            // Cari header Content-Range (Case insensitive)
+            // Look for Content-Range header
             if (preg_match('/Content-Range: bytes \d+-\d+\/(\d+)/i', $data, $matches)) {
                 return ['size' => (int)$matches[1], 'url' => $finalUrl];
             }
 
-            // Jika masih gagal, kembalikan -1
+            // If failed
             return ['size' => -1, 'url' => $finalUrl];
         }
 
@@ -103,13 +102,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $result = getRemoteFileSize($url);
             $fileSize = $result['size'];
             
-            // Ambil nama file dari URL terakhir (setelah redirect)
+            // Get filename from URL
             $pathInfo = pathinfo(parse_url($result['url'], PHP_URL_PATH));
             $filename = isset($pathInfo['basename']) && !empty($pathInfo['basename']) 
                       ? urldecode($pathInfo['basename']) 
                       : 'downloaded_file_' . time();
 
-            // Jika filename masih kosong atau aneh, beri nama default
+            // Default filename fallback
             if (!$filename || strlen($filename) < 2) {
                 $filename = 'file_' . time() . '.bin';
             }
@@ -136,18 +135,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         set_time_limit(0);
         ini_set('memory_limit', '1024M');
         
-        // PENTING: Tutup sesi SEBELUM proses berat dimulai.
-        // Ini membiarkan request 'check_progress' berjalan paralel tanpa menunggu download selesai.
+        // IMPORTANT: Close session BEFORE heavy process
         session_write_close(); 
 
         $url = filter_var($_POST['url'], FILTER_SANITIZE_URL);
         
-        // Setup nama file lokal
+        // Setup local filename
         $parsedUrl = parse_url($url);
         $pathInfo = pathinfo($parsedUrl['path']);
         $originalFilename = isset($pathInfo['basename']) && !empty($pathInfo['basename']) ? $pathInfo['basename'] : 'file.bin';
         
-        // Fungsi unique filename (disederhanakan)
+        // Unique filename function
         $saveDir = __DIR__;
         $filename = $saveDir . '/' . $originalFilename;
         $counter = 1;
@@ -156,39 +154,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $counter++;
         }
 
-        // Inisialisasi Data Progress Awal ke File JSON
+        // Initialize Progress Data
         $initialData = [
             'status' => 'starting',
             'downloaded' => 0,
             'total' => 0,
             'percent' => 0,
             'speed' => 0,
-            'message' => 'Memulai koneksi...'
+            'message' => 'Establishing connection...'
         ];
         file_put_contents($progressFile, json_encode($initialData));
         
-        // Variabel untuk tracking speed
+        // Speed tracking variables
         $lastUpdate = microtime(true);
         $lastDownloaded = 0;
 
         try {
             $fp = fopen($filename, 'wb');
-            if (!$fp) throw new Exception('Tidak bisa membuat file lokal.');
+            if (!$fp) throw new Exception('Cannot create local file.');
 
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_FILE, $fp);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 0);
             curl_setopt($ch, CURLOPT_NOPROGRESS, false);
-            // Tambahkan buffer size agar tidak terlalu sering memanggil callback I/O
             curl_setopt($ch, CURLOPT_BUFFERSIZE, 128 * 1024); 
             curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             
-            // Pass variabel ke callback menggunakan 'use'
+            // Progress callback
             curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, function($resource, $download_size, $downloaded, $upload_size, $uploaded) use ($progressFile, &$lastUpdate, &$lastDownloaded) {
                 
-                // Update file status setiap 0.5 detik (jangan terlalu cepat agar tidak membebani Disk I/O)
+                // Update file status every 0.5 seconds
                 $now = microtime(true);
                 if (($now - $lastUpdate) >= 0.5 && $download_size > 0) {
                     $timeDiff = $now - $lastUpdate;
@@ -204,7 +201,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         'message' => 'Downloading...'
                     ];
                     
-                    // Tulis ke FILE JSON fisik, BUKAN $_SESSION
                     file_put_contents($progressFile, json_encode($progressData));
                     
                     $lastUpdate = $now;
@@ -220,23 +216,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             fclose($fp);
             
             if (!$result || $httpCode != 200) {
-                unlink($filename); // Hapus file jika gagal
-                throw new Exception("Gagal download. HTTP Code: $httpCode. $error");
+                unlink($filename); // Delete file on failure
+                throw new Exception("Download failed. HTTP Code: $httpCode. $error");
             }
             
-            // Hapus file progress json setelah selesai
+            // Cleanup progress file
             if(file_exists($progressFile)) unlink($progressFile);
 
             echo json_encode([
                 'success' => true,
-                'message' => "Download selesai",
+                'message' => "Download completed",
                 'filename' => basename($filename),
                 'formatted_size' => formatBytes(filesize($filename)),
                 'size' => filesize($filename)
             ]);
             
         } catch (Exception $e) {
-            // Hapus file progress json jika error
+            // Cleanup on error
             if(file_exists($progressFile)) unlink($progressFile);
             
             echo json_encode([
@@ -258,11 +254,11 @@ function formatBytes($bytes, $precision = 2) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Php File Download</title>
+    <title>PHP File Download</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -288,7 +284,7 @@ function formatBytes($bytes, $precision = 2) {
         }
         .progress-bar {
             border-radius: 10px;
-            transition: width 0.3s ease, background-color 0.3s ease; /* Transisi untuk warna juga */
+            transition: width 0.3s ease, background-color 0.3s ease;
             font-size: 0.9rem;
             font-weight: 600;
         }
@@ -327,23 +323,23 @@ function formatBytes($bytes, $precision = 2) {
                     <div class="card-body p-4">
                         <form id="downloadForm">
                             <div class="mb-3">
-                                <label for="fileUrl" class="form-label fw-bold">URL File</label>
+                                <label for="fileUrl" class="form-label fw-bold">File URL</label>
                                 <input type="url" class="form-control form-control-lg" id="fileUrl" 
                                        placeholder="https://example.com/file.zip" required>
-                                <div class="form-text">Masukkan URL file yang ingin didownload</div>
+                                <div class="form-text">Enter the URL of the file you want to download</div>
                             </div>
                             
                             <!-- File Info Section -->
                             <div id="fileInfoSection" style="display: none;">
                                 <div class="file-info-box">
-                                    <h6 class="mb-2"><i class="fas fa-info-circle me-2"></i>Informasi File</h6>
+                                    <h6 class="mb-2"><i class="fas fa-info-circle me-2"></i>File Information</h6>
                                     <div class="row">
                                         <div class="col-6">
-                                            <small class="text-muted">Nama File:</small>
+                                            <small class="text-muted">Filename:</small>
                                             <div class="fw-bold" id="infoFilename">-</div>
                                         </div>
                                         <div class="col-6">
-                                            <small class="text-muted">Ukuran:</small>
+                                            <small class="text-muted">Size:</small>
                                             <div class="fw-bold" id="infoFilesize">-</div>
                                         </div>
                                     </div>
@@ -360,8 +356,8 @@ function formatBytes($bytes, $precision = 2) {
                         <!-- Progress Section -->
                         <div id="progressSection" class="mt-4" style="display: none;">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h6 class="mb-0">Status Download</h6>
-                                <span class="badge status-badge" id="statusBadge">Memulai...</span>
+                                <h6 class="mb-0">Download Status</h6>
+                                <span class="badge status-badge" id="statusBadge">Starting...</span>
                             </div>
                             
                             <div class="progress mb-3">
@@ -374,7 +370,7 @@ function formatBytes($bytes, $precision = 2) {
                             <div class="download-info">
                                 <div class="row g-3">
                                     <div class="col-6">
-                                        <small class="text-muted d-block">Data Terdownload</small>
+                                        <small class="text-muted d-block">Downloaded Data</small>
                                         <strong id="downloadedSize">0 B</strong>
                                     </div>
                                     <div class="col-6">
@@ -382,11 +378,11 @@ function formatBytes($bytes, $precision = 2) {
                                         <strong id="totalSize">-</strong>
                                     </div>
                                     <div class="col-6">
-                                        <small class="text-muted d-block">Kecepatan</small>
+                                        <small class="text-muted d-block">Speed</small>
                                         <strong id="downloadSpeed">0 KB/s</strong>
                                     </div>
                                     <div class="col-6">
-                                        <small class="text-muted d-block">Waktu Tersisa</small>
+                                        <small class="text-muted d-block">Time Remaining</small>
                                         <strong id="timeRemaining">-</strong>
                                     </div>
                                 </div>
@@ -413,16 +409,16 @@ function formatBytes($bytes, $precision = 2) {
             const fileUrl = document.getElementById('fileUrl').value;
             
             if (!fileUrl) {
-                alert('Masukkan URL terlebih dahulu!');
+                alert('Please enter a URL first!');
                 return;
             }
             
-            // Disable button dan tampilkan loading
+            // Disable button and show loading
             const downloadBtn = document.getElementById('downloadBtn');
             downloadBtn.disabled = true;
-            downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Mengecek file...';
+            downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Checking file...';
             
-            // Cek ukuran file terlebih dahulu secara otomatis
+            // Check file size automatically first
             fetch('', {
                 method: 'POST',
                 headers: {
@@ -435,19 +431,19 @@ function formatBytes($bytes, $precision = 2) {
                 if (data.success) {
                     fileInfo = data;
                     
-                    // Tampilkan info file
+                    // Show file info
                     document.getElementById('fileInfoSection').style.display = 'block';
                     document.getElementById('infoFilename').textContent = data.filename;
                     
                     if (data.unknown_size) {
-                        document.getElementById('infoFilesize').textContent = 'Tidak diketahui';
+                        document.getElementById('infoFilesize').textContent = 'Unknown';
                         document.getElementById('infoFilesize').className = 'fw-bold text-warning';
                     } else {
                         document.getElementById('infoFilesize').textContent = formatBytes(data.size);
                         document.getElementById('infoFilesize').className = 'fw-bold';
                     }
                     
-                    // Mulai download
+                    // Start download
                     setTimeout(() => {
                         startDownload();
                     }, 500);
@@ -472,29 +468,28 @@ function formatBytes($bytes, $precision = 2) {
             document.getElementById('progressSection').style.display = 'block';
             document.getElementById('resultSection').style.display = 'none';
             
-            // --- MODIFIKASI: RESET WARNA PROGRESS BAR ---
+            // Reset Progress Bar colors
             progressBar.style.width = '0%';
-            progressBar.classList.remove('bg-success'); // Hapus warna hijau jika ada
-            progressBar.classList.add('progress-bar-animated'); // Nyalakan animasi lagi
-            // --------------------------------------------
-
+            progressBar.classList.remove('bg-success'); // Remove green color if exists
+            progressBar.classList.add('progress-bar-animated'); // Restart animation
+            
             document.getElementById('progressText').textContent = '0%';
             
             const downloadBtn = document.getElementById('downloadBtn');
             downloadBtn.disabled = true;
             downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Downloading...';
             
-            // Set total size dari file info
+            // Set total size from file info
             if (fileInfo && fileInfo.size && !fileInfo.unknown_size) {
                 document.getElementById('totalSize').textContent = formatBytes(fileInfo.size);
             } else {
                 document.getElementById('totalSize').textContent = 'Unknown';
             }
             
-            updateStatus('Memulai download...', 'bg-primary');
+            updateStatus('Starting download...', 'bg-primary');
             startTime = Date.now();
             
-            // Start progress monitoring (setiap 300ms untuk lebih responsif)
+            // Start progress monitoring (every 300ms)
             downloadInterval = setInterval(checkProgress, 300);
             
             // Send download request
@@ -551,7 +546,7 @@ function formatBytes($bytes, $precision = 2) {
                 document.getElementById('totalSize').textContent = formatBytes(total);
             }
             
-            // Update speed dengan format yang lebih baik
+            // Update speed
             if (speed > 0) {
                 document.getElementById('downloadSpeed').textContent = formatBytes(speed) + '/s';
             } else {
@@ -568,7 +563,7 @@ function formatBytes($bytes, $precision = 2) {
                 document.getElementById('timeRemaining').textContent = 'Calculating...';
             }
             
-            // Update status badge dengan info progress
+            // Update status badge
             const downloadedMB = (downloaded / (1024 * 1024)).toFixed(1);
             const totalMB = (total / (1024 * 1024)).toFixed(1);
             updateStatus(`Downloading... ${downloadedMB} MB / ${totalMB} MB`, 'bg-info');
@@ -582,37 +577,37 @@ function formatBytes($bytes, $precision = 2) {
             downloadBtn.innerHTML = '<i class="fas fa-cloud-download-alt me-2"></i>Download File';
             
             if (data.success) {
-                // Update progress bar ke 100%
+                // Update progress bar to 100%
                 progressBar.style.width = '100%';
                 
-                // --- MODIFIKASI: UBAH WARNA JADI HIJAU ---
-                progressBar.classList.add('bg-success'); // Tambah class hijau Bootstrap
-                progressBar.classList.remove('progress-bar-animated'); // Matikan animasi
-                // -----------------------------------------
+                // --- Change color to GREEN ---
+                progressBar.classList.add('bg-success'); 
+                progressBar.classList.remove('progress-bar-animated'); 
+                // -----------------------------
 
                 document.getElementById('progressText').textContent = '100%';
                 
-                // Update semua info dengan data final
+                // Update info with final data
                 const fileSize = data.size || 0;
                 document.getElementById('downloadedSize').textContent = formatBytes(fileSize);
                 document.getElementById('totalSize').textContent = formatBytes(fileSize);
                 document.getElementById('timeRemaining').textContent = 'Completed!';
                 
-                // Hitung kecepatan rata-rata
+                // Calculate average speed
                 const elapsed = (Date.now() - startTime) / 1000;
                 const avgSpeed = elapsed > 0 ? fileSize / elapsed : 0;
                 document.getElementById('downloadSpeed').textContent = formatBytes(avgSpeed) + '/s (avg)';
                 
-                updateStatus('Download Selesai!', 'bg-success');
+                updateStatus('Download Completed!', 'bg-success');
                 
                 document.getElementById('resultSection').innerHTML = `
                     <div class="alert alert-success">
-                        <h6 class="alert-heading"><i class="fas fa-check-circle me-2"></i>Download Berhasil!</h6>
+                        <h6 class="alert-heading"><i class="fas fa-check-circle me-2"></i>Download Successful!</h6>
                         <hr>
-                        <p class="mb-1"><strong>File:</strong> ${data.filename}</p>
-                        <p class="mb-1"><strong>Ukuran:</strong> ${data.formatted_size}</p>
-                        <p class="mb-1"><strong>Waktu:</strong> ${formatTime(elapsed)}</p>
-                        <p class="mb-0"><strong>Kecepatan Rata-rata:</strong> ${formatBytes(avgSpeed)}/s</p>
+                        <p class="mb-1"><strong>Filename:</strong> ${data.filename}</p>
+                        <p class="mb-1"><strong>Size:</strong> ${data.formatted_size}</p>
+                        <p class="mb-1"><strong>Time:</strong> ${formatTime(elapsed)}</p>
+                        <p class="mb-0"><strong>Average Speed:</strong> ${formatBytes(avgSpeed)}/s</p>
                     </div>
                 `;
             } else {
@@ -620,14 +615,14 @@ function formatBytes($bytes, $precision = 2) {
                 document.getElementById('resultSection').innerHTML = `
                     <div class="alert alert-danger">
                         <i class="fas fa-exclamation-circle me-2"></i>
-                        <strong>Gagal!</strong> ${data.message}
+                        <strong>Failed!</strong> ${data.message}
                     </div>
                 `;
             }
             
             document.getElementById('resultSection').style.display = 'block';
             
-            // Reset fileInfo untuk download berikutnya
+            // Reset fileInfo for next download
             fileInfo = null;
             document.getElementById('fileInfoSection').style.display = 'none';
         }
