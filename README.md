@@ -1,6 +1,6 @@
 ## Advanced PHP File Downloader
 
-This tool is an advanced, server-based download system that allows you to fetch files from the internet (based on a URL) and store them on the server. Its features are engineered for speed, reliability, and process transparency.
+This tool is an advanced, php-based download system that allows you to fetch files from the internet (based on a URL) and store them on the server. Its features are engineered for speed, reliability, and process transparency.
 
 ### 1\. ⏱️ Real-time Download Progress (Live Progress)
 
@@ -46,3 +46,7 @@ The download process itself is optimized for high performance and handles comple
 *   **Clean Process:** If a download error or failure occurs (HTTP error or connection interruption), the incomplete file will be **automatically deleted** to prevent junk files.
     
 *   **Broad Server Support:** Utilizes the advanced PHP **cURL** library for reliable connections, capable of following redirects and securely handling complex connections (**SSL/HTTPS**).
+
+### 5\. ⚙️ Requirement
+
+*   *Php 8*
