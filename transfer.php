@@ -7,8 +7,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     
     // Progress check
     if ($_POST['action'] === 'check_progress') {
-        if (isset($_SESSION['download_progress'])) {
-            echo json_encode($_SESSION['download_progress']);
+        $progressFile = sys_get_temp_dir() . '/download_progress_' . session_id() . '.json';
+        
+        if (file_exists($progressFile)) {
+            $data = file_get_contents($progressFile);
+            echo $data;
         } else {
             echo json_encode([
                 'status' => 'idle',
