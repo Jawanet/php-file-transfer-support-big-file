@@ -1,15 +1,23 @@
 <?php
 session_start();
 
+// Definisi path file progress berdasarkan Session ID agar unik per user
+$progressFile = sys_get_temp_dir() . '/download_progress_' . session_id() . '.json';
+
 // Handle AJAX requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     header('Content-Type: application/json');
     
-    // Progress check
+    // -----------------------------------------------------------
+    // ACTION: CHECK PROGRESS
+    // -----------------------------------------------------------
     if ($_POST['action'] === 'check_progress') {
-        $progressFile = sys_get_temp_dir() . '/download_progress_' . session_id() . '.json';
-        
+        // Kita tidak butuh session lagi di sini, tutup biar performa lancar
+        session_write_close();
+
         if (file_exists($progressFile)) {
+            // Bersihkan cache statfiles agar data selalu fresh
+            clearstatcache(true, $progressFile);
             $data = file_get_contents($progressFile);
             echo $data;
         } else {
@@ -19,13 +27,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'total' => 0,
                 'percent' => 0,
                 'speed' => 0,
-                'message' => 'Belum ada download aktif'
+                'message' => 'Menunggu antrian...'
             ]);
         }
         exit;
     }
     
-    // Get file size
+    // -----------------------------------------------------------
+    // ACTION: GET FILE SIZE
+    // -----------------------------------------------------------
+
     if ($_POST['action'] === 'get_file_size') {
         if (!isset($_POST['url'])) {
             echo json_encode(['success' => false, 'message' => 'URL harus diisi!']);
@@ -39,253 +50,167 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit;
         }
         
-        try {
-            // Method 1: Coba dengan HEAD request terlebih dahulu
+        // Fungsi helper untuk mendapatkan ukuran file dengan metode bertingkat
+        function getRemoteFileSize($url) {
+            // METHOD 1: Coba HEAD request standar
             $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_NOBODY, true);
+            curl_setopt($ch, CURLOPT_NOBODY, true); // Hanya minta header
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HEADER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 10);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            curl_setopt($ch, CURLOPT_ENCODING, '');
             
-            // Tambahan header untuk compatibility
-            curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                'Accept: */*',
-                'Accept-Language: en-US,en;q=0.9',
-                'Cache-Control: no-cache',
-                'Connection: keep-alive'
-            ]);
-            
-            $response = curl_exec($ch);
-            $fileSize = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+            $data = curl_exec($ch);
+            $size = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $error = curl_error($ch);
+            $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL); // URL asli setelah redirect
             curl_close($ch);
+
+            // Jika Method 1 berhasil dapat ukuran valid (> 0)
+            if ($httpCode == 200 && $size > 0) {
+                return ['size' => $size, 'url' => $finalUrl];
+            }
+
+            // METHOD 2: Range Request (Fallback jika Method 1 gagal)
+            // Kita minta 1 byte saja, server biasanya akan membalas dengan header Content-Range: bytes 0-0/TOTAL_SIZE
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_NOBODY, false); // Harus GET, bukan HEAD
+            curl_setopt($ch, CURLOPT_RANGE, '0-0');  // Minta byte ke-0 saja
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HEADER, true);  // Kita butuh header response
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+            $data = curl_exec($ch);
+            $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+            curl_close($ch);
+
+            // Cari header Content-Range (Case insensitive)
+            if (preg_match('/Content-Range: bytes \d+-\d+\/(\d+)/i', $data, $matches)) {
+                return ['size' => (int)$matches[1], 'url' => $finalUrl];
+            }
+
+            // Jika masih gagal, kembalikan -1
+            return ['size' => -1, 'url' => $finalUrl];
+        }
+
+        try {
+            $result = getRemoteFileSize($url);
+            $fileSize = $result['size'];
             
-            // Ekstrak nama file dari URL
-            $parsedUrl = parse_url($url);
-            $pathInfo = pathinfo($parsedUrl['path']);
+            // Ambil nama file dari URL terakhir (setelah redirect)
+            $pathInfo = pathinfo(parse_url($result['url'], PHP_URL_PATH));
             $filename = isset($pathInfo['basename']) && !empty($pathInfo['basename']) 
-                      ? $pathInfo['basename'] 
-                      : 'downloaded_file';
-            
-            // Jika HEAD request gagal atau error, coba dengan GET request (range request)
-            if ($httpCode == 0 || $httpCode >= 400 || $error) {
-                // Method 2: Coba dengan Range Request untuk mendapatkan ukuran
-                $ch2 = curl_init($url);
-                curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch2, CURLOPT_HEADER, true);
-                curl_setopt($ch2, CURLOPT_NOBODY, false);
-                curl_setopt($ch2, CURLOPT_RANGE, '0-0'); // Request hanya 1 byte pertama
-                curl_setopt($ch2, CURLOPT_FOLLOWLOCATION, true);
-                curl_setopt($ch2, CURLOPT_MAXREDIRS, 10);
-                curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-                curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
-                curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 30);
-                curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
-                curl_setopt($ch2, CURLOPT_SSL_VERIFYHOST, false);
-                
-                $response2 = curl_exec($ch2);
-                $httpCode2 = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
-                $fileSize2 = curl_getinfo($ch2, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
-                
-                // Parse Content-Range header untuk mendapatkan ukuran total
-                if (preg_match('/Content-Range: bytes \d+-\d+\/(\d+)/i', $response2, $matches)) {
-                    $fileSize = $matches[1];
-                } else {
-                    $fileSize = $fileSize2;
-                }
-                
-                curl_close($ch2);
-                
-                // Jika masih gagal
-                if ($httpCode2 == 0 || ($httpCode2 >= 400 && $httpCode2 != 416)) {
-                    echo json_encode([
-                        'success' => true,
-                        'size' => 0,
-                        'filename' => $filename,
-                        'unknown_size' => true,
-                        'message' => 'Server tidak mendukung pengecekan ukuran file. Download akan tetap dilanjutkan.'
-                    ]);
-                    exit;
-                }
-                
-                $httpCode = $httpCode2;
+                      ? urldecode($pathInfo['basename']) 
+                      : 'downloaded_file_' . time();
+
+            // Jika filename masih kosong atau aneh, beri nama default
+            if (!$filename || strlen($filename) < 2) {
+                $filename = 'file_' . time() . '.bin';
             }
-            
-            // Validasi HTTP code
-            if ($httpCode >= 400 && $httpCode != 416) {
-                echo json_encode([
-                    'success' => false,
-                    'message' => "HTTP Error: $httpCode"
-                ]);
-                exit;
-            }
-            
-            // Jika ukuran tidak terdeteksi
-            if ($fileSize <= 0 || $fileSize == -1) {
-                echo json_encode([
-                    'success' => true,
-                    'size' => 0,
-                    'filename' => $filename,
-                    'unknown_size' => true,
-                    'message' => 'Ukuran file tidak dapat dideteksi. Download akan tetap dilanjutkan.'
-                ]);
-                exit;
-            }
-            
+
+            $unknownSize = ($fileSize <= 0);
+
             echo json_encode([
                 'success' => true,
                 'size' => $fileSize,
                 'filename' => $filename,
-                'unknown_size' => false
+                'unknown_size' => $unknownSize
             ]);
             
         } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
-            ]);
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         }
         exit;
     }
     
-    // Download file
+    // -----------------------------------------------------------
+    // ACTION: DOWNLOAD
+    // -----------------------------------------------------------
     if ($_POST['action'] === 'download') {
         set_time_limit(0);
         ini_set('memory_limit', '1024M');
         
-        // Validasi input
-        if (!isset($_POST['url'])) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'URL harus diisi!'
-            ]);
-            exit;
-        }
-        
+        // PENTING: Tutup sesi SEBELUM proses berat dimulai.
+        // Ini membiarkan request 'check_progress' berjalan paralel tanpa menunggu download selesai.
+        session_write_close(); 
+
         $url = filter_var($_POST['url'], FILTER_SANITIZE_URL);
         
-        // Validasi URL
-        if (!filter_var($url, FILTER_VALIDATE_URL)) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'URL tidak valid!'
-            ]);
-            exit;
-        }
-        
-        // Ekstrak nama file dari URL
+        // Setup nama file lokal
         $parsedUrl = parse_url($url);
         $pathInfo = pathinfo($parsedUrl['path']);
-        $originalFilename = isset($pathInfo['basename']) && !empty($pathInfo['basename']) 
-                          ? $pathInfo['basename'] 
-                          : 'downloaded_file';
+        $originalFilename = isset($pathInfo['basename']) && !empty($pathInfo['basename']) ? $pathInfo['basename'] : 'file.bin';
         
-        // Fungsi untuk mendapatkan nama file unik
-        function getUniqueFilename($filename) {
-            if (!file_exists($filename)) {
-                return $filename;
-            }
-            
-            $pathInfo = pathinfo($filename);
-            $dirname = $pathInfo['dirname'];
-            $basename = $pathInfo['filename'];
-            $extension = isset($pathInfo['extension']) ? '.' . $pathInfo['extension'] : '';
-            
-            $counter = 1;
-            while (file_exists($filename)) {
-                $filename = $dirname . '/' . $basename . '_' . $counter . $extension;
-                $counter++;
-            }
-            
-            return $filename;
-        }
-        
-        // Direktori penyimpanan
+        // Fungsi unique filename (disederhanakan)
         $saveDir = __DIR__;
-        $fullPath = $saveDir . '/' . $originalFilename;
-        $filename = getUniqueFilename($fullPath);
-        
-        // Reset progress
-        $_SESSION['download_progress'] = [
+        $filename = $saveDir . '/' . $originalFilename;
+        $counter = 1;
+        while(file_exists($filename)) {
+            $filename = $saveDir . '/' . pathinfo($originalFilename, PATHINFO_FILENAME) . '_' . $counter . '.' . pathinfo($originalFilename, PATHINFO_EXTENSION);
+            $counter++;
+        }
+
+        // Inisialisasi Data Progress Awal ke File JSON
+        $initialData = [
             'status' => 'starting',
             'downloaded' => 0,
             'total' => 0,
             'percent' => 0,
             'speed' => 0,
-            'message' => 'Memulai download...'
+            'message' => 'Memulai koneksi...'
         ];
-        $_SESSION['last_update'] = microtime(true);
-        $_SESSION['last_downloaded'] = 0;
+        file_put_contents($progressFile, json_encode($initialData));
         
+        // Variabel untuk tracking speed
+        $lastUpdate = microtime(true);
+        $lastDownloaded = 0;
+
         try {
-            // Inisialisasi cURL
-            $ch = curl_init($url);
             $fp = fopen($filename, 'wb');
-            
-            if (!$fp) {
-                throw new Exception('Tidak dapat membuat file output!');
-            }
-            
-            // Setup cURL options untuk performa maksimal
+            if (!$fp) throw new Exception('Tidak bisa membuat file lokal.');
+
+            $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_FILE, $fp);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 0);
-            curl_setopt($ch, CURLOPT_BUFFERSIZE, 1024 * 256); // Buffer 256KB untuk performa lebih baik
             curl_setopt($ch, CURLOPT_NOPROGRESS, false);
-            curl_setopt($ch, CURLOPT_MAXREDIRS, 10);
+            // Tambahkan buffer size agar tidak terlalu sering memanggil callback I/O
+            curl_setopt($ch, CURLOPT_BUFFERSIZE, 128 * 1024); 
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             
-            // Optimasi koneksi
-            curl_setopt($ch, CURLOPT_TCP_NODELAY, true);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
-            
-            // Progress callback
-            curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, function($resource, $download_size, $downloaded, $upload_size, $uploaded) {
-                if ($download_size > 0) {
-                    $now = microtime(true);
-                    $timeDiff = $now - $_SESSION['last_update'];
+            // Pass variabel ke callback menggunakan 'use'
+            curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, function($resource, $download_size, $downloaded, $upload_size, $uploaded) use ($progressFile, &$lastUpdate, &$lastDownloaded) {
+                
+                // Update file status setiap 0.5 detik (jangan terlalu cepat agar tidak membebani Disk I/O)
+                $now = microtime(true);
+                if (($now - $lastUpdate) >= 0.5 && $download_size > 0) {
+                    $timeDiff = $now - $lastUpdate;
+                    $downloadedDiff = $downloaded - $lastDownloaded;
+                    $speed = $timeDiff > 0 ? $downloadedDiff / $timeDiff : 0;
                     
-                    // Update setiap 0.5 detik untuk mengurangi overhead
-                    if ($timeDiff >= 0.5) {
-                        $downloadedDiff = $downloaded - $_SESSION['last_downloaded'];
-                        $speed = $timeDiff > 0 ? $downloadedDiff / $timeDiff : 0;
-                        
-                        $_SESSION['download_progress'] = [
-                            'status' => 'downloading',
-                            'downloaded' => $downloaded,
-                            'total' => $download_size,
-                            'percent' => ($downloaded / $download_size) * 100,
-                            'speed' => $speed,
-                            'message' => sprintf(
-                                'Downloaded %s / %s', 
-                                formatBytes($downloaded),
-                                formatBytes($download_size)
-                            ),
-                            'timestamp' => time()
-                        ];
-                        
-                        $_SESSION['last_update'] = $now;
-                        $_SESSION['last_downloaded'] = $downloaded;
-                    }
+                    $progressData = [
+                        'status' => 'downloading',
+                        'downloaded' => $downloaded,
+                        'total' => $download_size,
+                        'percent' => ($downloaded / $download_size) * 100,
+                        'speed' => $speed,
+                        'message' => 'Downloading...'
+                    ];
+                    
+                    // Tulis ke FILE JSON fisik, BUKAN $_SESSION
+                    file_put_contents($progressFile, json_encode($progressData));
+                    
+                    $lastUpdate = $now;
+                    $lastDownloaded = $downloaded;
                 }
             });
             
-            // SSL verification
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-            
-            // Kompresi untuk mempercepat transfer
-            curl_setopt($ch, CURLOPT_ENCODING, '');
-            
-            // Execute download
             $result = curl_exec($ch);
             $error = curl_error($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -293,44 +218,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             curl_close($ch);
             fclose($fp);
             
-            if ($result === false || $httpCode != 200) {
-                unlink($filename);
-                throw new Exception($error ?: "HTTP Error: $httpCode");
+            if (!$result || $httpCode != 200) {
+                unlink($filename); // Hapus file jika gagal
+                throw new Exception("Gagal download. HTTP Code: $httpCode. $error");
             }
             
-            $fileSize = filesize($filename);
-            
-            // Update final progress
-            $_SESSION['download_progress'] = [
-                'status' => 'completed',
-                'downloaded' => $fileSize,
-                'total' => $fileSize,
-                'percent' => 100,
-                'speed' => 0,
-                'message' => 'Download selesai!'
-            ];
-            
+            // Hapus file progress json setelah selesai
+            if(file_exists($progressFile)) unlink($progressFile);
+
             echo json_encode([
                 'success' => true,
-                'message' => "File berhasil didownload sebagai: " . basename($filename),
+                'message' => "Download selesai",
                 'filename' => basename($filename),
-                'fullpath' => $filename,
-                'size' => $fileSize,
-                'formatted_size' => formatBytes($fileSize)
+                'formatted_size' => formatBytes(filesize($filename)),
+                'size' => filesize($filename)
             ]);
             
         } catch (Exception $e) {
-            if (isset($fp) && is_resource($fp)) {
-                fclose($fp);
-            }
-            if (file_exists($filename)) {
-                unlink($filename);
-            }
-            
-            $_SESSION['download_progress'] = [
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ];
+            // Hapus file progress json jika error
+            if(file_exists($progressFile)) unlink($progressFile);
             
             echo json_encode([
                 'success' => false,
@@ -355,7 +261,7 @@ function formatBytes($bytes, $precision = 2) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Downloader Pro</title>
+    <title>Php File Download</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -395,11 +301,7 @@ function formatBytes($bytes, $precision = 2) {
             padding: 1rem;
             margin-top: 1rem;
         }
-        .btn-download {
-            padding: 0.75rem 2rem;
-            font-size: 1.1rem;
-            border-radius: 10px;
-        }
+
         .file-info-box {
             background: #e3f2fd;
             border-left: 4px solid #2196F3;
@@ -419,7 +321,7 @@ function formatBytes($bytes, $precision = 2) {
             <div class="col-md-8 col-lg-6">
                 <div class="card">
                     <div class="card-header py-3">
-                        <h4 class="mb-0 text-center"><i class="fas fa-download me-2"></i>File Downloader Pro</h4>
+                        <h4 class="mb-0 text-center"><i class="fas fa-download me-2"></i> PHP File Download</h4>
                     </div>
                     <div class="card-body p-4">
                         <form id="downloadForm">
