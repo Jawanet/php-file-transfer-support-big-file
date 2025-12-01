@@ -49,4 +49,4 @@ The download process itself is optimized for high performance and handles comple
 
 ### 5\. ⚙️ Requirement
 
-*   *Php 8*
+*   *Php 8.0-8.4*
