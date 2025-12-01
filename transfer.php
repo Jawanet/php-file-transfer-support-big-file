@@ -315,7 +315,7 @@ function formatBytes($bytes, $precision = 2) {
 <body>
     <div class="container">
         <div class="row justify-content-center">
-            <div class="col-md-8 col-lg-6">
+            <div class="col-md-8 col-lg-8">
                 <div class="card">
                     <div class="card-header py-3">
                         <h4 class="mb-0 text-center"><i class="fas fa-download me-2"></i> PHP File Download</h4>
