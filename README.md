@@ -47,7 +47,11 @@ The download process itself is optimized for high performance and handles comple
     
 *   **Broad Server Support:** Utilizes the advanced PHP **cURL** library for reliable connections, capable of following redirects and securely handling complex connections (**SSL/HTTPS**).
 
-### 5\. ⚙️ Requirement
+### 5\. ⚙️ Minimal Resource Usage
+
+It runs quickly and without timeouts from PHP or the web server. The script has a very low resource footprint and won't burden shared hosting, thanks to its optimized AJAX implementation.
+
+### 6\. ⚙️ Requirement
 
 *   *Php 8.0-8.4*
 
