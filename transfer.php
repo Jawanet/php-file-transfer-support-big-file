@@ -394,6 +394,14 @@ function formatBytes($bytes, $precision = 2) {
                     </div>
                 </div>
             </div>
+
+                            <!-- Footer -->
+                <div class="text-center mt-4">
+                    <p class="text-white mb-0">
+                        <small>Created by <a href="https://jnhost.co.id" target="_blank" class="text-white fw-bold text-decoration-none" style="text-shadow: 0 2px 4px rgba(0,0,0,0.3);">jnhost.co.id</a></small>
+                    </p>
+                </div>
+            
         </div>
     </div>
 
